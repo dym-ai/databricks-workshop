@@ -1,0 +1,71 @@
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# #### Importing the relevant libraries
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+import dataiku
+import pandas as pd, numpy as np
+from dataiku import pandasutils as pdu
+from dataiku.dbconnect import DkuDBConnect
+from pyspark.sql.functions import when
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# ### Creating the session
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+dku_dbconnect = DkuDBConnect()
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# ### Reading the datasets
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+input_dataset = dataiku.Dataset("LOANS_ENRICHED_joined_prepared")
+df = dku_dbconnect.get_dataframe(input_dataset)
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# ### We will create a new column EMP_BUCKET,  select top 5 Emp Title and rest NA
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+df = df.withColumn("EMP_BUCKET", when(df.EMP_TITLE == "teacher", "teacher")
+                                        .when(df.EMP_TITLE == "manager", "manager")
+                                        .when(df.EMP_TITLE == "registered nurse", "registered nurse")
+                                        .when(df.EMP_TITLE == "driver", "driver")
+                                        .when(df.EMP_TITLE == "owner", "owner")
+                                        .otherwise("NA"))
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# ### Scaling INSTALLMENT column by creating INSTALL_NORM column
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+# Define max and min values and collect them
+mean_installement = df.agg({'INSTALLMENT': 'mean'}).collect()[0][0]
+stddev_installement = df.agg({'INSTALLMENT': 'stddev'}).collect()[0][0]
+
+# Create a new column based off the scaled data
+df = df.withColumn('INSTALL_NORM',
+                  ((df['INSTALLMENT'] - mean_installement) / stddev_installement))
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# ### Imputing median value
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+# Calculate the median value
+col_median = int(df.agg({'EMP_LENGTH_YEARS': 'median'}).collect()[0][0])
+
+# Replacing with the median value for that column
+df=df.na.fill({'EMP_LENGTH_YEARS': col_median})
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# ### Dropping these columns 'EMP_TITLE','INSTALLMENT' as we will be using new columns for ML
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+df = df.drop('INSTALLMENT')
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: MARKDOWN
+# ### Create Result Table
+
+# -------------------------------------------------------------------------------- NOTEBOOK-CELL: CODE
+# get output dataset
+LOANS_FE = dataiku.Dataset("LOANS_FE")
+
+# write input dataframe to output dataset
+dku_dbconnect.write_with_schema(LOANS_FE,df)
